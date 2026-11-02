@@ -141,7 +141,10 @@ is no migration command and no pre-deploy step. Upgrading is a new image tag.
   set to the served name.
 - `POST /bots` answers **503** when transcription is requested and no backend is configured,
   before any meeting row is written; `transcribe_enabled=false` spawns a capture-only bot.
-  meeting-api's `/health` reports `stt: misconfigured` while the URL is set and the token is not.
+  meeting-api's `/health` reports `stt: misconfigured` while the URL is set and the token is not,
+  and in that state `POST /bots` does **not** refuse: observed 2026-11-02, a request with the URL
+  set and no token created meeting id 1 (`status: requested`) and spawned a bot. Leave the URL
+  unset until the token exists, or expect bots whose transcription will fail.
 - Ours for the spike: `TRANSCRIPTION_SERVICE_URL=https://transcription.vexa.ai`, token from
   Niels's vexa.ai account, `TRANSCRIPTION_MODEL` unset. The hosted unit's region is not stated by
   upstream; the spike uses test audio only.
@@ -163,6 +166,9 @@ validation pending). Highlights:
   sha256=<hmac_sha256(secret, "<X-Webhook-Timestamp>." + raw_body)>`, `X-Webhook-Timestamp`,
   and `Authorization: Bearer <secret>` (legacy). Delivery history `GET /user/webhook/deliveries`.
   Transcript updates are not pushed; poll the transcript endpoint or use the live feed.
+- `GET /user/webhook` reads the configuration back with the secret masked to its last four
+  characters (`webhook_secret_set: true`); the admin read `GET /admin/users/{id}` shows the URL
+  and events but never the secret, so it is not the place to check whether one is stored.
 - Admin (loopback 8001 in Lite, so through `railway ssh`): `X-Admin-API-Key: <ADMIN_API_TOKEN>`,
   `POST /admin/users {email, name}`, `POST /admin/users/{id}/tokens?scopes=bot,tx`,
   `GET /admin/users/email/{email}`, `DELETE /admin/tokens/{id}`. A user's default
@@ -179,6 +185,12 @@ Amsterdam), environment `development`.
 | Redis | Railway plugin, `redis:8.2` | region EU West |
 | `vexa-lite` | image `vexaai/vexa-lite:v0.12.28` | public domain on target port 8056, health check `/health` (timeout 300 s), restart on failure, resource cap **8 GB / 8 vCPU** (the plan allows 24 GB / 24 vCPU per service; a replica needs at least 4 GB) |
 | `webhook-capture` | a 60-line Python server, spike only | public domain on 8080; records every delivery; read side guarded by a token |
+
+**Railway's health check probes the port in the `PORT` variable, not the domain's target port.**
+Without `PORT` the first deploy succeeded (no health check path yet) and every redeploy after the
+path was set died at the 300 s timeout with all programs running. `PORT=8056` on the service fixes
+it; it is safe because every Lite program that listens gets an explicit `PORT` from supervisord
+(`environment=` lines), so nothing else picks the container-level value up.
 
 Railway gives: one container per service, private IPv6 network between services, variable
 references, `railway ssh` into the running container. Railway does not give: a Docker socket,
